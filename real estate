@@ -1,0 +1,183 @@
+
+#Real Estate Data
+Our study encompasses relation of having a RICS member in the board on financial performance of the company. For that, we have given data features:
+
+**Performance Variable** will be Price/Book values of year 2005-2019 
+**independent variables** These will include
+1. Year: Year of which Price/Book is associated with.
+2. Board Members: Number of board of directors of the institution
+3. % RICS (Ratio of RICS Members / Total Board Members)
+4.  CEO Tenure (CEO Tenure in years since on job)
+5.  No. of Independent Director (Ratio of independent directors to total board members)
+6. CEO Duality (Whether the CEO is also chair)
+7. Firm Age since Establishment (Years)
+8. Firm Age since Public (Years)
+9. Firm Size (Total Assets in MGBP)
+10. REIT Status: Binary Variable (0: Not REIT 1: REIT)
+11. Leverage: Total Debt to Total Assets ratio for corresponding year
+12. Insiders value: Percentage %
+13. Institutionals value: Percentage %
+14. Market Cap: (In MGBP)
+15. RICS Exe%: (Ratio of Executive RICS/Total Executive Board Members)
+16. RICS Non Exec%: (Ratio of Non-Executive RICS/Total Non-Executive Board Members)
+17. Property type: Diversified or Focused
+18.Unemployment rate%: Percentage
+19. FTSE EPRA
+20. Bond
+21. Female Ratio%: (Number of Female members/Number of total board members)
+
+```{r}
+data <- read.csv("Model_data.csv")
+str(data)
+```
+#Preprocessing of data
+The data requires to be converted to the right data type before training a model off it. Categorical variables will be converted in to a factor data type whereas numerical ones will be converted to numeric type. We do it following below code: 
+
+##Correcting data format of each column
+```{r}
+indexes <- c(5,7,8,13,16:18)
+data[,indexes] <- lapply(data[,indexes], as.numeric)
+data$REIT.Status <- as.factor(data$REIT.Status)
+data$Property.Variable.0.or.1. <-as.factor(data$Property.Variable.0.or.1.)
+data$Market.Capitalization..MGBP. <- as.numeric(paste(data$Market.Capitalization..MGBP.))
+
+```
+
+There was some data we were unable to fetch. For that, we use median values to impute in missing value region. 
+##Checking for missing values & Mutating it with Median
+
+```{r}
+library(dplyr)
+data <- data %>%
+  mutate(Leverage = replace(Leverage, is.na(Leverage), median(Leverage, na.rm = TRUE)))
+
+sum(is.na(data)) #Checking for missing values
+
+```
+
+#Summary statistics
+As we have cleaned the data, now we observe the summary of each feature.
+```{r}
+ss <- data %>%
+  select(Price.Book.Value, RICS.Ratio...., Total.Board.Members, Independent.Directors.Ratio....,
+         Female.Ratio....,  Insiders, Institutionals, CEO.Tenure, Firm.Size..Assets.in.MGBP., 
+         Market.Capitalization..MGBP., Firm.Age..Years., Firm.Age.Since.Public..Years., 
+         Leverage, UNEMPLOYMENT.RATE...., X.FTSE.EPRA.NAREIT.UK...., Bond)
+
+library(psych)
+summary_statistics <- describe(ss)
+write.csv(summary_statistics, "summary statistics.csv")
+summary_statistics
+```
+
+#Correlation Matrix
+Before training the model, it is important to observe if two or more features are highly correlated. High correlation could result in multicollinearity for which we will test the model at the later stage.
+```{r}
+library(corrplot)
+matrix <- cor(ss)
+corrplot(matrix, method = "color")
+write.csv(matrix, "correlation matrix.csv")
+matrix
+```
+#Feature Reduction
+To take features as an input to the alogirthm, it is important to ensure that the features will have some sort of role to identify the performance variable. For example,Institutional ID cannot be used as a feature as we know for sure. Similarly, we work with all variables side-by-side to ensure that our model has only relevant features.
+
+###1. Removing Highly Correlated Variables
+The caret package offers the findCorrelation() function, which takes a correlation matrix as an input, and the optional cutoff parameter, which specifies a threshold for the absolute value of a pairwise correlation. This then returns a (possibly zero length) vector that shows the columns to be removed from our data frame due to correlation. 
+
+```{r}
+library(caret)
+findCorrelation(matrix, cutoff = 0.8)
+```
+Firm Age Since Years and Public are highly correlated. Hence we remove 
+
+
+#Check for Linear Combinations
+```{r}
+findLinearCombos(ss)
+```
+
+
+#Panel Data Model
+```{r}
+library(plm)
+library(data.table)
+str(data)
+plm_data <- data.table(data)
+names(plm_data) <- c("Year", "Institution_Key", "Institution_Name", "Price_Book_Value",
+                     "RICS_Ratio", "Total_Board_Members", "Independent_Directors_Ratio",
+                     "Female_Ratio", "Insiders", "Institutionals", "CEO_Tenure", "Firm_Size",
+                     "Market_Cap", "Firm_Age", "Firm_Age_IPO", "Leverage", "RICS_Exec_Ratio",
+                     "RICS_nonExec_Ratio", "REIT_Status", "Property_type","Unemployment_rate",
+                     "EPRA", "BOND")
+
+
+model_1_data <- plm_data %>%
+  select("Year", "Institution_Name", "Price_Book_Value",
+         "RICS_Ratio", "Total_Board_Members", "Independent_Directors_Ratio",
+         "Female_Ratio", "Insiders", "Institutionals", "CEO_Tenure", "Firm_Size",
+         "Market_Cap", "Firm_Age", "Firm_Age_IPO", "Leverage", "REIT_Status",
+         "Property_type","Unemployment_rate","EPRA", "BOND", "RICS_Exec_Ratio",
+         "RICS_nonExec_Ratio")
+
+model_1_data <- pdata.frame(model_1_data, index = c("Institution_Name", "Year"),  
+                            drop.index = TRUE, row.names = TRUE)
+
+library(broom)
+model_1 <- plm(Price_Book_Value ~ log1p(RICS_Ratio) + log1p(Total_Board_Members) + 
+                 log1p(Independent_Directors_Ratio) + log1p(Female_Ratio) + log1p(Insiders) + 
+                 log1p(Institutionals) + log1p(CEO_Tenure) + log1p(Firm_Size) + log1p(Market_Cap) + 
+                 Firm_Age + Firm_Age_IPO + Leverage + REIT_Status + Property_type + 
+                 Unemployment_rate + EPRA + BOND, 
+                 data = model_1_data, model = "within")
+
+summary(model_1)
+```
+
+```{r}
+model_2 <- plm(Price_Book_Value ~ log1p(RICS_Exec_Ratio) + log1p(Total_Board_Members) + 
+                 log1p(Independent_Directors_Ratio) + log1p(Female_Ratio) + log1p(Insiders) + 
+                 log1p(Institutionals) + log1p(CEO_Tenure) + log1p(Firm_Size) + log1p(Market_Cap) + 
+                 Firm_Age + Firm_Age_IPO + Leverage + REIT_Status + Property_type + 
+                 Unemployment_rate + EPRA + BOND, 
+               data = model_1_data, model = "within")
+
+summary(model_2)
+```
+
+```{r}
+model_3 <- plm(Price_Book_Value ~ log1p(RICS_nonExec_Ratio) + log1p(Total_Board_Members) + 
+                 log1p(Independent_Directors_Ratio) + log1p(Female_Ratio) + log1p(Insiders) + 
+                 log1p(Institutionals) + log1p(CEO_Tenure) + log1p(Firm_Size) + log1p(Market_Cap) + 
+                 Firm_Age + Firm_Age_IPO + Leverage + REIT_Status + Property_type + 
+                 Unemployment_rate + EPRA + BOND, 
+               data = model_1_data, model = "within")
+
+summary(model_3)
+```
+
+
+#Normality Testing of Model Residuals
+The Shapiro-Wilk test, proposed  calculates a W statistic that tests whether a random sample, x1,x2,…,xn comes from (specifically) a normal distribution. For a value of W>0.5 it shows that the Residuals are normally distributed hence confirming that model does not have multicollinearity.
+```{r}
+shapiro.test(model_1$residuals) #Normal
+shapiro.test(model_2$residuals) #Normal
+shapiro.test(model_3$residuals) #Normal
+```
+
+#Fetching these out in csv form
+```{r}
+model_1_plm <- tidy(model_1)
+model_2_plm <- tidy(model_2)
+model_3_plm <- tidy(model_3)
+
+write.csv(model_1_plm, "model 1.csv")
+write.csv(model_2_plm, "model 2.csv")
+write.csv(model_3_plm, "model 3.csv")
+```
+
+
+
+
+
+
